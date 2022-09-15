@@ -1,0 +1,87 @@
+version: "3"
+
+networks:
+  loki:
+
+services:
+
+  tempo:
+    image: grafana/tempo
+    container_name: tempo
+    command: [ "-search.enabled=true", "-config.file=/etc/tempo.yaml","--target=all", "--auth.enabled=false" ]
+    volumes:
+      - ./tempo-data/:/tmp/tempo
+      - ./config/tempo-s3.yaml:/etc/tempo.yaml
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "14268"
+    depends_on:
+      - minio
+    networks:
+      - loki
+
+  read:
+    image: grafana/loki
+    command: "-config.file=/etc/loki/config.yaml -target=read"
+    ports:
+      - 3101:3100
+      - 7946
+      - 9095
+    volumes:
+      - ./config/loki-config.yaml:/etc/loki/config.yaml
+    depends_on:
+      - minio
+    networks: &loki-dns
+      loki:
+        aliases:
+          - loki
+
+  write:
+    image: grafana/loki
+    command: "-config.file=/etc/loki/config.yaml -target=write"
+    ports:
+      - 3102:3100
+      - 7946
+      - 9095
+    volumes:
+      - ./config/loki-config.yaml:/etc/loki/config.yaml
+    depends_on:
+      - minio
+    networks:
+      <<: *loki-dns
+
+
+  minio:
+    image: minio/minio
+    entrypoint:
+      - sh
+      - -euc
+      - mkdir -p /data/tempo && mkdir -p /data/loki-data && mkdir -p /data/loki-ruler && /opt/bin/minio server /data --console-address ':41099'
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=trT35QEpum63Vs
+      - MINIO_PROMETHEUS_AUTH_TYPE=public
+      - MINIO_UPDATE=off
+    ports:
+      - 9000
+      - "41099:41099"
+    volumes:
+      - ./.data/minio:/data
+    networks:
+      - loki
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    volumes:
+      - ./config/grafana.ini:/etc/grafana/grafana.ini
+      - ./grafana/data/:/var/lib/grafana
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=false
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    ports:
+      - "3001:3000"
